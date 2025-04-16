@@ -1174,11 +1174,12 @@ export default function Home() {
           <div className="flex gap-2 items-center">
             <Input
               type={showToken ? "text" : "password"}
-              placeholder="GitHub token (optional, for private repos)"
+              placeholder="GitHub token (for private repos or to avoid 403 API rate limit)"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               className="flex-1"
             />
+
             <Button
               variant="outline"
               size="icon"
