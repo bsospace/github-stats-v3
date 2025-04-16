@@ -9,8 +9,8 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 
 interface DateRangePickerProps {
-  date: DateRange
-  onChange: (date: DateRange) => void
+  date: DateRange | undefined
+  onChange: (date: DateRange | undefined) => void
   className?: string
 }
 
@@ -46,6 +46,7 @@ export function DateRangePicker({ date, onChange, className }: DateRangePickerPr
             selected={date}
             onSelect={onChange}
             numberOfMonths={2}
+            required={false}
           />
         </PopoverContent>
       </Popover>
