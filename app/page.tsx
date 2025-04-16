@@ -80,6 +80,69 @@ export default function Home() {
     to: new Date(),
   })
 
+  async function fetchAllCommits(owner: string, repo: string, branch: string, headers: HeadersInit) {
+    let page = 1
+    const allCommits: any[] = []
+    let keepFetching = true
+
+    while (keepFetching) {
+      const response = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/commits?sha=${branch}&per_page=100&page=${page}`,
+        { headers }
+      )
+
+      if (!response.ok) break
+
+      const data = await response.json()
+
+      allCommits.push(...data)
+      page++
+
+      // ถ้าค่าที่ดึงมา < 100 แสดงว่าหน้านี้คือหน้าสุดท้าย
+      if (data.length < 100) keepFetching = false
+    }
+
+    return allCommits
+  }
+
+  async function fetchUserCommitsAllPages(owner: string, repo: string, login: string, branch: string, headers: HeadersInit, dateRange: DateRange) {
+    let page = 1
+    const allCommits: any[] = []
+    let hasMore = true
+
+    while (hasMore) {
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/commits?author=${login}&sha=${branch}&per_page=100&page=${page}`,
+        { headers }
+      )
+
+      if (!res.ok) break
+
+      const commits = await res.json()
+
+      // filter by date range here (optional optimization)
+      const filtered = commits.filter((commit: any) => {
+        const commitDate = new Date(commit.commit.author.date)
+        return (
+          (!dateRange.from || commitDate >= dateRange.from) &&
+          (!dateRange.to || commitDate <= dateRange.to)
+        )
+      })
+
+      allCommits.push(...filtered)
+
+      if (commits.length < 100) {
+        hasMore = false
+      } else {
+        page++
+      }
+    }
+
+    return allCommits
+  }
+
+
+
   const fetchRepoStats = async (branchName?: string, scanAllBranches = false) => {
     setLoading(true)
     setError(null)
@@ -110,12 +173,17 @@ export default function Home() {
       }
       const repoInfo = await repoResponse.json()
 
+      console.log("Repo response:", repoInfo)
+
       // Fetch branches - this is repository-wide
       let branches = []
       try {
-        const branchesResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches`, { headers })
+        const branchesResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches?per_page=100`, { headers })
+
+
         if (branchesResponse.ok) {
           branches = await branchesResponse.json()
+          console.log("Repo branchesResponse:", branches)
         } else {
           console.warn("Failed to fetch branches:", branchesResponse.status)
         }
@@ -123,12 +191,12 @@ export default function Home() {
         console.warn("Error fetching branches:", branchErr)
       }
 
-      // Prepare date range parameters for API requests
-      const fromDate = dateRange.from ? format(dateRange.from, "yyyy-MM-dd") : undefined
-      const toDate = dateRange.to ? format(dateRange.to, "yyyy-MM-dd") : undefined
+      // // Prepare date range parameters for API requests
+      // const fromDate = dateRange.from ? format(dateRange.from, "yyyy-MM-dd") : undefined
+      // const toDate = dateRange.to ? format(dateRange.to, "yyyy-MM-dd") : undefined
 
-      // Date range query parameter for GitHub API
-      const dateQuery = fromDate && toDate ? `&since=${fromDate}T00:00:00Z&until=${toDate}T23:59:59Z` : ""
+      // // Date range query parameter for GitHub API
+      // const dateQuery = fromDate && toDate ? `&since=${fromDate}T00:00:00Z&until=${toDate}T23:59:59Z` : ""
 
       // If scanning all branches, we'll process each branch and aggregate the data
       if (scanAllBranches && branches.length > 0) {
@@ -166,12 +234,14 @@ export default function Home() {
           try {
             // Fetch commits for this branch with date range filter
             const commitsResponse = await fetch(
-              `https://api.github.com/repos/${owner}/${repo}/commits?sha=${branch.name}&per_page=100${dateQuery}`,
+              `https://api.github.com/repos/${owner}/${repo}/commits?sha=${branch.name}?per_page=100`,
               { headers },
             )
 
             if (commitsResponse.ok) {
               const commits = await commitsResponse.json()
+
+              console.log("commits response:", commits)
 
               // Process commits for this branch
               for (const commit of commits) {
@@ -516,28 +586,22 @@ export default function Home() {
 
         // Fetch contributors for the specific branch with date range filter
         let contributors = []
+        const commits = await fetchAllCommits(owner, repo, targetBranch, headers)
         try {
           // For branch-specific contributors, we need to get commits for that branch
-          const commitsResponse = await fetch(
-            `https://api.github.com/repos/${owner}/${repo}/commits?sha=${targetBranch}&per_page=100${dateQuery}`,
-            { headers },
-          )
 
-          if (commitsResponse.ok) {
-            const commits = await commitsResponse.json()
+          if (commits) {
+
+            console.log("commits response:", commits)
 
             // Count contributions by author
             const contributorMap = new Map()
 
             for (const commit of commits) {
               const author = commit.author
-              if (!author) continue
 
-              // Check if commit is within date range
-              const commitDate = new Date(commit.commit.author.date)
-              if ((dateRange.from && commitDate < dateRange.from) || (dateRange.to && commitDate > dateRange.to)) {
-                continue
-              }
+              console.log('commit in for:', commit)
+              if (!author) continue
 
               const login = author.login
               const avatar_url = author.avatar_url
@@ -568,9 +632,19 @@ export default function Home() {
                   for (const file of commitDetail.files || []) {
                     const extension = file.filename.split(".").pop()?.toLowerCase() || "unknown"
 
+
+
                     // Map common extensions to languages
+                    // ใช้ filename แทน extension อย่างเดียว
                     let language = extension
-                    if (extension === "js") language = "JavaScript"
+                    const filename = file.filename.toLowerCase()
+
+                    if (filename.endsWith("controller.php")) {
+                      language = "PHP Controller"
+                    } else if (filename.endsWith(".blade.php")) {
+                      language = "PHP Blade"
+                    }
+                    else if (extension === "js") language = "JavaScript"
                     else if (extension === "ts") language = "TypeScript"
                     else if (extension === "py") language = "Python"
                     else if (extension === "java") language = "Java"
@@ -722,14 +796,8 @@ export default function Home() {
         try {
           // For branch-specific commit activity, we need to get commits for that branch
           // and then aggregate them by week
-          const commitsResponse = await fetch(
-            `https://api.github.com/repos/${owner}/${repo}/commits?sha=${targetBranch}&per_page=100${dateQuery}`,
-            { headers },
-          )
 
-          if (commitsResponse.ok) {
-            const commits = await commitsResponse.json()
-
+          if (commits) {
             // Group commits by week
             const weekMap = new Map()
 
@@ -774,12 +842,10 @@ export default function Home() {
 
           const userLanguagePromises = topContributors.map(async (contributor: any) => {
             // Make sure we're using the targetBranch parameter here
-            const commitsResponse = await fetch(
-              `https://api.github.com/repos/${owner}/${repo}/commits?author=${contributor.login}&sha=${targetBranch}&per_page=100${dateQuery}`,
-              { headers },
-            )
+            const userCommits = await fetchUserCommitsAllPages(owner, repo, contributor.login, targetBranch, headers, dateRange)
 
-            if (!commitsResponse.ok) {
+
+            if (!userCommits) {
               return {
                 user: contributor.login,
                 avatar: contributor.avatar_url,
@@ -787,22 +853,13 @@ export default function Home() {
               }
             }
 
-            const commits = await commitsResponse.json()
-
             // For each commit, fetch the files changed to determine languages
             const languageStats: Record<string, number> = {}
 
             // We'll limit to 10 most recent commits per user to avoid API rate limits
-            const recentCommits = commits.slice(0, 10)
+            const recentCommits = userCommits.slice(0, 10)
 
             for (const commit of recentCommits) {
-              const commitDate = new Date(commit.commit.author.date)
-
-              // Skip if outside date range
-              if ((dateRange.from && commitDate < dateRange.from) || (dateRange.to && commitDate > dateRange.to)) {
-                continue
-              }
-
               try {
                 const commitDetailResponse = await fetch(
                   `https://api.github.com/repos/${owner}/${repo}/commits/${commit.sha}`,
@@ -818,13 +875,19 @@ export default function Home() {
 
                     // Map common extensions to languages
                     let language = extension
+                    const filename = file.filename.toLowerCase()
+
+                    if (filename.endsWith("controller.php")) {
+                      language = "PHP Controller"
+                    } else if (filename.endsWith(".blade.php")) {
+                      language = "PHP Blade"
+                    } else if (extension === "php") language = "PHP"
                     if (extension === "js") language = "JavaScript"
                     else if (extension === "ts") language = "TypeScript"
                     else if (extension === "py") language = "Python"
                     else if (extension === "java") language = "Java"
                     else if (extension === "rb") language = "Ruby"
                     else if (extension === "go") language = "Go"
-                    else if (extension === "php") language = "PHP"
                     else if (extension === "cs") language = "C#"
                     else if (extension === "cpp" || extension === "cc") language = "C++"
                     else if (extension === "c") language = "C"
@@ -1023,7 +1086,6 @@ export default function Home() {
                   else if (extension === "java") language = "Java"
                   else if (extension === "rb") language = "Ruby"
                   else if (extension === "go") language = "Go"
-                  else if (extension === "php") language = "PHP"
                   else if (extension === "cs") language = "C#"
                   else if (extension === "cpp" || extension === "cc") language = "C++"
                   else if (extension === "c") language = "C"
@@ -1134,13 +1196,13 @@ export default function Home() {
             </p>
           )}
 
-          <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+          {/* <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-medium">Date Range:</span>
             </div>
             <DateRangePicker date={dateRange} onChange={handleDateRangeChange} />
-          </div>
+          </div> */}
         </div>
 
         {error && (
@@ -1373,8 +1435,8 @@ export default function Home() {
 
                       <TabsContent value="user-complexity">
                         {complexityData &&
-                        Array.isArray(complexityData.userComplexityStats) &&
-                        complexityData.userComplexityStats.length > 0 ? (
+                          Array.isArray(complexityData.userComplexityStats) &&
+                          complexityData.userComplexityStats.length > 0 ? (
                           <UserComplexityStats
                             userComplexityStats={complexityData.userComplexityStats}
                             currentBranch={currentBranch}
